@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WoodCraft Showroom Desk</title>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #f4efe9; color: #1b2a4a; margin: 0; padding: 24px; }
+    h1 { margin: 0 0 16px; color: #1b2a4a; }
+    .grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 10px; border-bottom: 1px solid #e5ddd3; text-align: left; }
+    th { background: #1b2a4a; color: #fff; }
+    .badge { padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+    .OK { background: #d4edda; color: #155724; }
+    .LOW { background: #f8d7da; color: #721c24; }
+    input, select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; margin: 4px 2px; }
+    button { background: #8b5a2b; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #1b2a4a; }
+    button:hover { opacity: 0.9; }
+    .bill { background: #faf6f0; border: 1px dashed #8b5a2b; padding: 14px; border-radius: 8px; margin-top: 14px; }
+    .error { color: #b00020; font-weight: bold; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>WoodCraft Showroom — Order & Billing Desk</h1>
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Live Furniture Catalogue</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Item</th><th>Category</th><th>Price (₹)</th><th>Stock</th><th>Status</th></tr></thead>
+          <tbody id="catBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Order History / View Past Bill</h2>
+        <input id="searchOrderId" placeholder="Enter Order ID (e.g. FUR1)" />
+        <button class="secondary" onclick="findOrder()">Search Bill</button>
+        <div id="searchMsg" class="error"></div>
+        <div id="historyBox" class="bill" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>New Order</h2>
+      <input id="custName" placeholder="Customer Name" />
+      <select id="custType">
+        <option value="Retail">Retail (0% Disc)</option>
+        <option value="Wholesale">Wholesale (15% Disc)</option>
+      </select>
+      <hr />
+      <input id="itemId" type="number" placeholder="Furniture ID (e.g. 101)" style="width: 170px;" />
+      <input id="itemQty" type="number" placeholder="Qty" style="width: 80px;" />
+      <button onclick="addItem()">+ Add Item</button>
+      <button class="secondary" onclick="undoItem()">Undo Last (-1)</button>
+
+      <ul id="cartList"></ul>
+      <button onclick="submitOrder()" style="width:100%; margin-top:8px;">Generate Bill (0 Finish)</button>
+      <div id="msg" class="error"></div>
+      <div id="billBox" class="bill" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script>
+    let cart = [];
+
+    async function loadCatalogue() {
+      const res = await fetch('/api/catalogue');
+      const items = await res.json();
+      document.getElementById('catBody').innerHTML = items.map(f => `
+        <tr>
+          <td>${f.id}</td><td>${f.name}</td><td>${f.category}</td>
+          <td>₹${f.price.toFixed(2)}</td><td>${f.stock}</td>
+          <td><span class="badge ${f.status}">${f.status}</span></td>
+        </tr>`).join('');
+    }
+
+    function addItem() {
+      const id = parseInt(document.getElementById('itemId').value);
+      const qty = parseInt(document.getElementById('itemQty').value);
+      if (!id || !qty) return;
+      cart.push({ id, qty });
+      renderCart();
+    }
+
+    function undoItem() {
+      cart.pop();
+      renderCart();
+    }
+
+    function renderCart() {
+      document.getElementById('cartList').innerHTML = cart.map(c => `<li>ID ${c.id} × ${c.qty}</li>`).join('');
+    }
+
+    function renderBillHTML(data) {
+      const rows = data.items.map(i =>
+        `<tr><td>${i.name}</td><td>${i.qty}</td><td>₹${i.price.toFixed(2)}</td><td>₹${i.lineTotal.toFixed(2)}</td></tr>`
+      ).join('');
+
+      return `
+        <strong>Invoice: ${data.orderId}</strong> | Token #${data.token} (<strong>${data.van}</strong>)<br/>
+        Customer: ${data.customer}
+        <table>
+          <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table><br/>
+        Subtotal: ₹${data.subtotal.toFixed(2)}<br/>
+        Discount: -₹${data.discount.toFixed(2)}<br/>
+        GST (18%): +₹${data.gst.toFixed(2)}<br/>
+        <h3>Final Total: ₹${data.total.toFixed(2)}</h3>`;
+    }
+
+    async function submitOrder() {
+      document.getElementById('msg').innerText = '';
+      if (cart.length === 0) { document.getElementById('msg').innerText = 'Cart is empty!'; return; }
+      const name = document.getElementById('custName').value || 'Walk-in';
+      const type = document.getElementById('custType').value;
+      const payload = `${name}|${type}|` + cart.map(c => `${c.id}:${c.qty}`).join(',');
+
+      const res = await fetch('/api/order', { method: 'POST', body: payload });
+      const data = await res.json();
+      if (!res.ok) {
+        document.getElementById('msg').innerText = 'Order Error: ' + data.error;
+        return;
+      }
+      cart = [];
+      renderCart();
+      loadCatalogue();
+      const box = document.getElementById('billBox');
+      box.style.display = 'block';
+      box.innerHTML = renderBillHTML(data);
+    }
+
+    async function findOrder() {
+      document.getElementById('searchMsg').innerText = '';
+      const box = document.getElementById('historyBox');
+      box.style.display = 'none';
+
+      const id = document.getElementById('searchOrderId').value.trim();
+      if (!id) { document.getElementById('searchMsg').innerText = 'Please enter an Order ID.'; return; }
+
+      const res = await fetch('/api/bill?id=' + encodeURIComponent(id));
+      const data = await res.json();
+      if (!res.ok) {
+        document.getElementById('searchMsg').innerText = data.error;
+        return;
+      }
+      box.style.display = 'block';
+      box.innerHTML = renderBillHTML(data);
+    }
+
+    loadCatalogue();
+  </script>
+</body>
+</html>
